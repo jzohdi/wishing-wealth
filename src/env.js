@@ -7,6 +7,15 @@ export const env = createEnv({
 	 * isn't built with invalid env vars.
 	 */
 	server: {
+		DATABASE_URL_UNPOOLED: z.string().url(),
+		PGHOST: z.string(),
+		SESSION_SECRET: z.string(),
+		OTP_SECRET: z.string(),
+		CRON_SECRET: z.string(),
+		RESEND_API_KEY: z.string(),
+		RESEND_FROM_EMAIL: z.string().email(),
+		ALERT_EMAIL: z.string().email(),
+		AUTH_ALLOWED_EMAILS: z.string().transform((val) => val.split(",")),
 		DATABASE_URL: z.string().url(),
 		NODE_ENV: z
 			.enum(["development", "test", "production"])
@@ -28,6 +37,15 @@ export const env = createEnv({
 	 */
 	runtimeEnv: {
 		DATABASE_URL: process.env.DATABASE_URL,
+		DATABASE_URL_UNPOOLED: process.env.DATABASE_URL_UNPOOLED,
+		PGHOST: process.env.PGHOST,
+		SESSION_SECRET: process.env.SESSION_SECRET,
+		OTP_SECRET: process.env.OTP_SECRET,
+		CRON_SECRET: process.env.CRON_SECRET,
+		RESEND_API_KEY: process.env.RESEND_API_KEY,
+		RESEND_FROM_EMAIL: process.env.RESEND_FROM_EMAIL,
+		ALERT_EMAIL: process.env.ALERT_EMAIL,
+		AUTH_ALLOWED_EMAILS: process.env.AUTH_ALLOWED_EMAILS,
 		NODE_ENV: process.env.NODE_ENV,
 		// NEXT_PUBLIC_CLIENTVAR: process.env.NEXT_PUBLIC_CLIENTVAR,
 	},
