@@ -1,3 +1,5 @@
+import constants from "../constants";
+
 export type SymbolRow = { id: bigint; ticker: string };
 export type OpenPosition = {
     id: string;
@@ -25,6 +27,8 @@ export function makePlan(args: {
     openPositions: OpenPosition[];
     latestCloseBySymbolId: Record<string, number>;
     cashCurrent: number;
+    blockedSymbolIds?: Set<string>;
+    stopLossMultiplier?: number;
 }) {
     const {
         tickers,
@@ -32,6 +36,8 @@ export function makePlan(args: {
         openPositions,
         latestCloseBySymbolId,
         cashCurrent,
+        blockedSymbolIds,
+        stopLossMultiplier,
     } = args;
 
     const symbolIdByTicker = new Map<string, bigint>(
@@ -63,6 +69,19 @@ export function makePlan(args: {
         });
     }
 
+    // Determine stop-loss triggers (price below avgCost * multiplier)
+    const enforcedStopLossIds = new Set<string>();
+    const multiplier = stopLossMultiplier ?? constants.STOP_LOSS_MULTIPLIER;
+    for (const p of openPositions) {
+        const key = String(p.symbolId);
+        const price = latestCloseBySymbolId[key];
+        if (price === undefined) continue;
+        const avg = Number(p.avgCost);
+        if (price + 1e-9 < avg * multiplier) {
+            enforcedStopLossIds.add(key);
+        }
+    }
+
     const plan: PlanItem[] = [];
     console.log("[plan] Computing target per symbol", {
         targetPerSymbol: Number(targetPerSymbol.toFixed(2)),
@@ -71,10 +90,15 @@ export function makePlan(args: {
     for (const t of tickers) {
         const sid = symbolIdByTicker.get(t);
         if (!sid) continue;
-        const price = latestCloseBySymbolId[String(sid)];
+        const key = String(sid);
+        const price = latestCloseBySymbolId[key];
         if (!price) continue;
-        const desiredQty = targetPerSymbol / price;
-        const cur = openBySymbol.get(String(sid));
+        const isBlocked = blockedSymbolIds?.has(key) === true;
+        const stopLoss = enforcedStopLossIds.has(key);
+        const desiredQty = isBlocked || stopLoss
+            ? 0
+            : (targetPerSymbol / price);
+        const cur = openBySymbol.get(key);
         const delta = cur ? desiredQty - cur.qty : desiredQty;
         plan.push({
             ticker: t,

@@ -1,6 +1,7 @@
 import "dotenv/config";
 
-const BASE_URL = "http://localhost:3000";
+// const BASE_URL = "http://localhost:3000";
+const BASE_URL = "https://wishing-wealth.vercel.app";
 const SECRET = process.env.CRON_SECRET;
 
 if (!SECRET) {

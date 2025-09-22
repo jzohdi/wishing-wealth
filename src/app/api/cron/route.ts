@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
 import { env } from "@/env";
-import constants from "@/server/constants";
 import { fetchTickersFromSource } from "@/server/scrape/tickers";
 import { db } from "@/server/db";
 import {
@@ -11,7 +10,7 @@ import {
     symbols,
     users,
 } from "@/server/db/schema";
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import { makePlan } from "@/server/portfolio/make-plan";
 import { getExchanges } from "@/server/scrape/trading-view";
 import { updatePricesForSymbols } from "@/server/stock-market/update-prices";
@@ -20,6 +19,7 @@ import React from "react";
 import { render } from "@react-email/render";
 import { sendEmail } from "@/lib/resend";
 import { ChangeSummaryEmail } from "../../../../emails/change-summary";
+import constants from "@/server/constants";
 
 async function ensureSymbols(
     tickers: { ticker: string; exchange: string; url: string }[],
@@ -211,6 +211,41 @@ export async function GET(req: Request) {
             avgCost: Number(p.avgCost),
         });
     }
+    // Compute blocked symbols based on recent realized losses (cooldown)
+    const blockedSymbolIds = new Set<string>();
+    try {
+        const now = new Date();
+        const cutoff = new Date(now.getTime());
+        cutoff.setUTCDate(
+            cutoff.getUTCDate() - constants.REENTRY_COOLDOWN_DAYS,
+        );
+        // Find recently closed positions with realized loss
+        const recentClosed = await db
+            .select({
+                symbolId: positions.symbolId,
+                closedAt: positions.closedAt,
+                realizedPnl: positions.realizedPnl,
+            })
+            .from(positions)
+            .where(
+                and(
+                    eq(positions.portfolioId, portfolioId),
+                    // closedAt after cutoff (NULLs are excluded by this comparison)
+                    gte(positions.closedAt, cutoff),
+                    lt(positions.realizedPnl, sql`0`),
+                ),
+            )
+            .orderBy(desc(positions.closedAt));
+        for (const row of recentClosed) {
+            blockedSymbolIds.add(String(row.symbolId));
+        }
+        console.log("[cron] Blocked symbols (cooldown)", {
+            count: blockedSymbolIds.size,
+        });
+    } catch (err) {
+        console.warn("[cron] Failed to compute blocked symbols", { err });
+    }
+
     console.log("[cron] Making rebalance plan");
     const { plan } = makePlan({
         // Use only tickers that resolved to symbolIds to avoid mismatches
@@ -224,6 +259,8 @@ export async function GET(req: Request) {
         })),
         latestCloseBySymbolId: latestClose,
         cashCurrent,
+        blockedSymbolIds,
+        stopLossMultiplier: constants.STOP_LOSS_MULTIPLIER,
     });
     console.log("[cron] Plan ready", { actions: plan.length });
 
