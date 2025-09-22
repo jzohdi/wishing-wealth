@@ -7,9 +7,10 @@ import {
   positions,
   symbols,
   pricesDaily,
-  portfolioValues,
 } from "@/server/db/schema";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
+import constants from "@/server/constants";
+import { EquityLineChart } from "@/components/ui/equity-line-chart";
 
 export default async function Home() {
   const user = await getCurrentUser();
@@ -114,6 +115,7 @@ export default async function Home() {
     const cost = qty * avg;
     const pnl = mv - cost;
     const pnlPct = cost !== 0 ? (pnl / cost) * 100 : 0;
+    const stopTriggered = price + 1e-9 < avg * constants.STOP_LOSS_MULTIPLIER;
     return {
       id: p.id,
       ticker: String(p.ticker).toUpperCase(),
@@ -123,23 +125,50 @@ export default async function Home() {
       mv,
       pnl,
       pnlPct,
+      stopTriggered,
     };
   });
 
-  // Equity series from portfolio_values; fallback to single-point current equity
+  // Build equity series (one point per day). If no stored history, synthesize today from current state.
   const values = portfolioId
     ? await db
-        .select({ date: portfolioValues.date, equity: portfolioValues.equity })
-        .from(portfolioValues)
-        .where(eq(portfolioValues.portfolioId, portfolioId))
-        .orderBy(portfolioValues.date)
+        .select({ date: pricesDaily.date })
+        .from(pricesDaily)
+        .where(inArray(pricesDaily.symbolId, symbolIds))
+        .orderBy(pricesDaily.date)
     : [];
-  let equitySeries: { date: string; equity: number }[] = values
-    .filter((v) => v.date && v.equity != null)
-    .map((v) => ({
-      date: String(v.date),
-      equity: Number(v.equity),
-    }));
+
+  // Use portfolioValues if present in the future; for now aggregate by day from latest closes available per day.
+  // Fallback to single-point current equity for today.
+  const byDate = new Map<string, number>();
+  if (symbolIds.length > 0) {
+    // Pull daily closes for these symbols and aggregate to an equity estimate: cash + sum(qty * close)
+    const priceRows = await db
+      .select({
+        symbolId: pricesDaily.symbolId,
+        date: pricesDaily.date,
+        close: pricesDaily.close,
+      })
+      .from(pricesDaily)
+      .where(inArray(pricesDaily.symbolId, symbolIds))
+      .orderBy(pricesDaily.date);
+    const qtyBySymbol = new Map<string, number>(
+      open.map((p) => [String(p.symbolId), Number(p.qty)])
+    );
+    for (const r of priceRows) {
+      if (r.close == null) continue;
+      const day = String(r.date);
+      const qty = qtyBySymbol.get(String(r.symbolId)) ?? 0;
+      const add = qty * Number(r.close);
+      byDate.set(day, (byDate.get(day) ?? 0) + add);
+    }
+  }
+
+  let equitySeries: { date: string; equity: number }[] = Array.from(
+    byDate.entries()
+  )
+    .map(([date, mv]) => ({ date, equity: cashCurrent + mv }))
+    .sort((a, b) => a.date.localeCompare(b.date));
   if (equitySeries.length === 0) {
     const mv = positionsView.reduce((s, r) => s + r.mv, 0);
     equitySeries = [
@@ -157,8 +186,36 @@ export default async function Home() {
           <p className="text-sm text-emerald-400">Logged in as {user.email}</p>
         </div>
 
-        <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
-          <section className="lg:col-span-2 rounded-xl border border-white/10 bg-white/5 p-4 shadow-sm">
+        {/* KPIs */}
+        <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {(() => {
+            const equityNow =
+              positionsView.reduce((s, r) => s + r.mv, 0) + cashCurrent;
+            const gainers = positionsView.filter((r) => r.pnl >= 0).length;
+            const losers = positionsView.filter((r) => r.pnl < 0).length;
+            const stops = positionsView.filter((r) => r.stopTriggered).length;
+            return (
+              <>
+                <KpiCard label="Equity" value={formatCurrency(equityNow)} />
+                <KpiCard label="Cash" value={formatCurrency(cashCurrent)} />
+                <KpiCard label="Gainers" value={`${gainers}`} />
+                <KpiCard
+                  label="Stops flagged"
+                  value={`${stops}`}
+                  tone={stops > 0 ? "warn" : "ok"}
+                />
+              </>
+            );
+          })()}
+        </div>
+
+        {/* Equity line chart */}
+        <div className="mb-8">
+          <EquityLineChart data={equitySeries} />
+        </div>
+
+        <div className="grid grid-cols-1 gap-8">
+          <section className="rounded-xl border border-white/10 bg-white/5 p-4 shadow-sm">
             <h2 className="mb-3 text-lg font-semibold text-emerald-400">
               Open positions
             </h2>
@@ -172,6 +229,7 @@ export default async function Home() {
                     <th className="px-2 py-2 text-right">Last</th>
                     <th className="px-2 py-2 text-right">Market Value</th>
                     <th className="px-2 py-2 text-right">Unrealized PnL</th>
+                    <th className="px-2 py-2 text-right">Stop</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -199,12 +257,22 @@ export default async function Home() {
                           {formatCurrency(r.pnl)} ({r.pnlPct.toFixed(2)}%)
                         </span>
                       </td>
+                      <td className="px-2 py-2 text-right">
+                        {r.stopTriggered ? (
+                          <span className="rounded bg-red-500/10 px-2 py-0.5 text-xs text-red-300">
+                            below{" "}
+                            {Math.round(constants.STOP_LOSS_MULTIPLIER * 100)}%
+                          </span>
+                        ) : (
+                          <span className="text-white/40">—</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                   {positionsView.length === 0 && (
                     <tr>
                       <td
-                        colSpan={6}
+                        colSpan={7}
                         className="px-2 py-6 text-center text-white/60"
                       >
                         No open positions
@@ -215,19 +283,113 @@ export default async function Home() {
               </table>
             </div>
           </section>
-
-          <section className="rounded-xl border border-white/10 bg-white/5 p-4 shadow-sm">
-            <h2 className="mb-3 text-lg font-semibold text-emerald-400">
-              Equity over time
-            </h2>
-            <EquityChart series={equitySeries} />
-            <div className="mt-3 text-xs text-white/60">
-              <span>Points: {equitySeries.length}</span>
-            </div>
-          </section>
         </div>
+
+        {/* Blocked tickers (cooldown) */}
+        <BlockedTickers userEmail={user.email} />
       </div>
     </main>
+  );
+}
+
+function KpiCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "ok" | "warn";
+}) {
+  const color = tone === "warn" ? "text-red-300" : "text-emerald-300";
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/5 p-4 shadow-sm">
+      <div className="text-xs uppercase tracking-wide text-white/60">
+        {label}
+      </div>
+      <div className={`mt-1 text-2xl font-semibold ${color}`}>{value}</div>
+    </div>
+  );
+}
+
+async function BlockedTickers({ userEmail }: { userEmail: string }) {
+  // Determine user's portfolio
+  const userRow = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.email, userEmail))
+    .limit(1);
+  const userId = userRow[0]?.id;
+  if (!userId) return null;
+  const pf = await db
+    .select({ id: portfolios.id })
+    .from(portfolios)
+    .where(eq(portfolios.userId, userId))
+    .limit(1);
+  const portfolioId = pf[0]?.id;
+  if (!portfolioId) return null;
+
+  // Recently closed losers within cooldown
+  const now = new Date();
+  const cutoff = new Date(now.getTime());
+  cutoff.setUTCDate(cutoff.getUTCDate() - constants.REENTRY_COOLDOWN_DAYS);
+  const recentClosed = await db
+    .select({
+      symbolId: positions.symbolId,
+      closedAt: positions.closedAt,
+      realizedPnl: positions.realizedPnl,
+      ticker: symbols.ticker,
+    })
+    .from(positions)
+    .innerJoin(symbols, eq(positions.symbolId, symbols.id))
+    .where(
+      and(
+        eq(positions.portfolioId, portfolioId),
+        // closed after cutoff
+        gte(positions.closedAt, cutoff),
+        lt(positions.realizedPnl, sql`0`)
+      )
+    )
+    .orderBy(desc(positions.closedAt));
+
+  if (recentClosed.length === 0) return null;
+
+  // Unique by symbol
+  const seen = new Set<string>();
+  const items = recentClosed.filter((r) => {
+    const k = String(r.symbolId);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+
+  return (
+    <section className="mt-8 rounded-xl border border-white/10 bg-white/5 p-4 shadow-sm">
+      <h2 className="mb-3 text-lg font-semibold text-emerald-400">
+        Blocked tickers (cooldown)
+      </h2>
+      <div className="text-sm text-white/70">
+        <div className="mb-2 text-white/60">
+          Preventing re-entry for {constants.REENTRY_COOLDOWN_DAYS} days after a
+          loss
+        </div>
+        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {items.map((r) => (
+            <li
+              key={String(r.symbolId)}
+              className="flex items-center justify-between rounded-md border border-white/10 bg-white/5 px-3 py-2"
+            >
+              <span className="font-semibold">
+                {String(r.ticker).toUpperCase()}
+              </span>
+              <span className="text-xs text-white/60">
+                closed {String(r.closedAt)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </section>
   );
 }
 
@@ -246,68 +408,4 @@ function formatNumber(n: number, digits = 2) {
   }).format(n);
 }
 
-function EquityChart({
-  series,
-}: {
-  series: { date: string; equity: number }[];
-}) {
-  const width = 520;
-  const height = 160;
-  const pad = 12;
-  const xs = series.map((_, i) => i);
-  const ys = series.map((p) => p.equity);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
-  const spanY = Math.max(1, maxY - minY);
-  const maxX = Math.max(1, xs.length - 1);
-  const points = xs
-    .map((x, i) => {
-      const yVal = ys[i] ?? minY;
-      const nx = (x / maxX) * (width - pad * 2) + pad;
-      const ny = height - ((yVal - minY) / spanY) * (height - pad * 2) - pad;
-      return `${nx},${ny}`;
-    })
-    .join(" ");
-
-  const last = ys[ys.length - 1] ?? 0;
-  const first = ys[0] ?? 0;
-  const delta = last - first;
-  const deltaPct = first !== 0 ? (delta / first) * 100 : 0;
-
-  return (
-    <div>
-      <svg viewBox={`0 0 ${width} ${height}`} width="100%" height="160">
-        <defs>
-          <linearGradient id="grad" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="#10b981" stopOpacity="0.35" />
-            <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        {series.length > 1 && (
-          <>
-            <polyline
-              fill="none"
-              stroke="#10b981"
-              strokeWidth="2"
-              points={points}
-            />
-            <polygon
-              points={`${pad},${height - pad} ${points} ${width - pad},${height - pad}`}
-              fill="url(#grad)"
-              opacity="0.6"
-            />
-          </>
-        )}
-      </svg>
-      <div className="mt-2 text-sm">
-        <span className={delta >= 0 ? "text-emerald-400" : "text-red-400"}>
-          {formatCurrency(delta)} ({deltaPct.toFixed(2)}%)
-        </span>
-        <span className="ml-2 text-white/60">
-          from {series[0]?.date ?? "-"} to{" "}
-          {series[series.length - 1]?.date ?? "-"}
-        </span>
-      </div>
-    </div>
-  );
-}
+// Equity chart removed
