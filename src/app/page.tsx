@@ -11,6 +11,7 @@ import {
 import { and, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import constants from "@/server/constants";
 import { EquityLineChart } from "@/components/ui/equity-line-chart";
+import { RefreshPricesButton } from "@/components/ui/refresh-prices-button";
 
 export default async function Home() {
   const user = await getCurrentUser();
@@ -211,6 +212,10 @@ export default async function Home() {
 
         {/* Equity line chart */}
         <div className="mb-8">
+          <div className="mb-3 flex items-center justify-between">
+            <div />
+            <RefreshPricesButton />
+          </div>
           <EquityLineChart data={equitySeries} />
         </div>
 

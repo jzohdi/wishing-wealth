@@ -50,17 +50,17 @@ export function EquityLineChart({ data }: { data: EquityPoint[] }) {
 
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 p-4 shadow-sm">
-      <div className="mb-2 flex items-end justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-emerald-400">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold text-emerald-400 sm:text-lg">
             Net worth over time
           </h2>
           <p className="text-xs text-white/60">
             One point per day. Today uses the latest available totals.
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="text-right">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:gap-3">
+          <div className="text-left sm:text-right">
             <div
               className={`text-sm font-semibold ${
                 delta >= 0 ? "text-emerald-300" : "text-red-300"
@@ -70,7 +70,7 @@ export function EquityLineChart({ data }: { data: EquityPoint[] }) {
             </div>
             <div className="text-[11px] text-white/50">Change in range</div>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1">
             {(
               [
                 { key: "ALL", label: "All" },
@@ -86,7 +86,7 @@ export function EquityLineChart({ data }: { data: EquityPoint[] }) {
                   key={opt.key}
                   type="button"
                   onClick={() => setRange(opt.key)}
-                  className={`rounded-md border px-2 py-1 text-xs transition-colors ${
+                  className={`whitespace-nowrap rounded-md border px-1.5 py-0.5 text-[11px] transition-colors sm:px-2 sm:py-1 sm:text-xs ${
                     active
                       ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
                       : "border-white/10 bg-white/5 text-white/60 hover:bg-white/10"
