@@ -112,6 +112,7 @@ async function updateAllPrices(
             symbolId: positions.symbolId,
             qty: positions.qty,
             avgCost: positions.avgCost,
+            openedAt: positions.openedAt,
             ticker: symbols.ticker,
             exchange: symbols.exchange,
         })
@@ -256,6 +257,7 @@ export async function GET(req: Request) {
             symbolId: p.symbolId,
             qty: Number(p.qty),
             avgCost: Number(p.avgCost),
+            openedAt: p.openedAt as unknown as Date,
         })),
         latestCloseBySymbolId: latestClose,
         cashCurrent,
