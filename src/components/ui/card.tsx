@@ -1,27 +1,27 @@
-import * as React from "react";
+import type * as React from "react";
 
 export function Card({
-  className,
-  ...props
+	className,
+	...props
 }: React.HTMLAttributes<HTMLDivElement>) {
-  return (
-    <div
-      className={`rounded-xl border border-neutral-200 bg-white shadow-sm ${className ?? ""}`}
-      {...props}
-    />
-  );
+	return (
+		<div
+			className={`rounded-xl border border-neutral-200 bg-white shadow-sm ${className ?? ""}`}
+			{...props}
+		/>
+	);
 }
 
 export function CardHeader({
-  className,
-  ...props
+	className,
+	...props
 }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={`p-5 ${className ?? ""}`} {...props} />;
+	return <div className={`p-5 ${className ?? ""}`} {...props} />;
 }
 
 export function CardContent({
-  className,
-  ...props
+	className,
+	...props
 }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={`p-5 pt-0 ${className ?? ""}`} {...props} />;
+	return <div className={`p-5 pt-0 ${className ?? ""}`} {...props} />;
 }

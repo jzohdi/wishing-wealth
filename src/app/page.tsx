@@ -1,416 +1,239 @@
+import { desc, eq, sql } from "drizzle-orm";
 import Link from "next/link";
+
+import { RefreshPricesButton } from "@/components/ui/refresh-prices-button";
 import { getCurrentUser } from "@/server/auth/session";
 import { db } from "@/server/db";
-import {
-  users,
-  portfolios,
-  positions,
-  symbols,
-  pricesDaily,
-} from "@/server/db/schema";
-import { and, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
-import constants from "@/server/constants";
-import { EquityLineChart } from "@/components/ui/equity-line-chart";
-import { RefreshPricesButton } from "@/components/ui/refresh-prices-button";
+import { pricesDaily, symbols } from "@/server/db/schema";
 
 export default async function Home() {
-  const user = await getCurrentUser();
-  if (!user) {
-    return (
-      <main className="flex min-h-screen flex-col items-center justify-center bg-neutral-950 text-white">
-        <div className="container flex flex-col items-center justify-center gap-6 px-4 py-16">
-          <h1 className="font-extrabold text-5xl tracking-tight sm:text-[5rem]">
-            Wishing Wealth Tracker
-          </h1>
-          <p className="text-white/80">Equal-weight portfolio tracker</p>
-          <Link
-            className="rounded bg-white/10 px-4 py-2 hover:bg-white/20"
-            href="/login"
-          >
-            Login
-          </Link>
-        </div>
-      </main>
-    );
-  }
+	const user = await getCurrentUser();
+	if (!user) {
+		return (
+			<main className="flex min-h-screen flex-col items-center justify-center bg-neutral-950 text-white">
+				<div className="container flex flex-col items-center justify-center gap-6 px-4 py-16">
+					<h1 className="font-extrabold text-5xl tracking-tight sm:text-[5rem]">
+						Wishing Wealth Tracker
+					</h1>
+					<p className="text-white/80">GMI Signal & Ticker Tracker</p>
+					<Link
+						className="rounded bg-white/10 px-4 py-2 hover:bg-white/20"
+						href="/login"
+					>
+						Login
+					</Link>
+				</div>
+			</main>
+		);
+	}
 
-  // Resolve userId
-  const userRow = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.email, user.email))
-    .limit(1);
-  const userId = userRow[0]?.id;
-  if (!userId) {
-    return (
-      <main className="flex min-h-screen flex-col items-center justify-center bg-neutral-950 text-white">
-        <div className="container flex flex-col items-center justify-center gap-6 px-4 py-16">
-          <h1 className="font-extrabold text-5xl tracking-tight sm:text-[5rem]">
-            Wishing Wealth Tracker
-          </h1>
-          <p className="text-white/80">No account found for {user.email}</p>
-        </div>
-      </main>
-    );
-  }
+	// Get all tickers currently on the page
+	const tickersOnPage = await db
+		.select({
+			id: symbols.id,
+			ticker: symbols.ticker,
+			exchange: symbols.exchange,
+			firstSeen: symbols.firstSeen,
+			lastSeen: symbols.lastSeen,
+		})
+		.from(symbols)
+		.where(eq(symbols.isOnPage, true))
+		.orderBy(symbols.ticker);
 
-  // Get default portfolio for user
-  const pf = await db
-    .select({ id: portfolios.id, cash: portfolios.cashCurrent })
-    .from(portfolios)
-    .where(eq(portfolios.userId, userId))
-    .limit(1);
-  const portfolioId = pf[0]?.id;
-  const cashCurrent = Number(pf[0]?.cash ?? 0);
+	// Get latest prices for each ticker
+	const tickerData: Array<{
+		id: bigint;
+		ticker: string;
+		exchange: string;
+		firstSeen: string | null;
+		lastSeen: string | null;
+		price: number | null;
+		priceDate: string | null;
+	}> = [];
 
-  // Load open positions with symbols
-  const open = portfolioId
-    ? await db
-        .select({
-          id: positions.id,
-          symbolId: positions.symbolId,
-          qty: positions.qty,
-          avgCost: positions.avgCost,
-          ticker: symbols.ticker,
-        })
-        .from(positions)
-        .innerJoin(symbols, eq(positions.symbolId, symbols.id))
-        .where(
-          and(
-            eq(positions.portfolioId, portfolioId),
-            isNull(positions.closedAt)
-          )
-        )
-    : [];
+	for (const t of tickersOnPage) {
+		const priceRow = await db
+			.select({
+				close: pricesDaily.close,
+				date: pricesDaily.date,
+			})
+			.from(pricesDaily)
+			.where(eq(pricesDaily.symbolId, t.id))
+			.orderBy(desc(pricesDaily.date))
+			.limit(1);
 
-  const symbolIds = open.map((p) => p.symbolId);
-  let latestClose: Record<string, number> = {};
-  if (symbolIds.length > 0) {
-    const rows = await db
-      .select({
-        symbolId: pricesDaily.symbolId,
-        date: pricesDaily.date,
-        close: pricesDaily.close,
-      })
-      .from(pricesDaily)
-      .where(inArray(pricesDaily.symbolId, symbolIds))
-      .orderBy(pricesDaily.symbolId, desc(pricesDaily.date));
-    const map: Record<string, number> = {};
-    for (const r of rows) {
-      const k = String(r.symbolId);
-      if (map[k] !== undefined) continue;
-      if (r.close == null) continue;
-      map[k] = Number(r.close);
-    }
-    latestClose = map;
-  }
+		tickerData.push({
+			...t,
+			price: priceRow[0]?.close ? Number(priceRow[0].close) : null,
+			priceDate: priceRow[0]?.date ?? null,
+		});
+	}
 
-  const positionsView = open.map((p) => {
-    const qty = Number(p.qty);
-    const avg = Number(p.avgCost);
-    const last = latestClose[String(p.symbolId)];
-    const price: number = Number.isFinite(last as number)
-      ? (last as number)
-      : avg;
-    const mv = qty * price;
-    const cost = qty * avg;
-    const pnl = mv - cost;
-    const pnlPct = cost !== 0 ? (pnl / cost) * 100 : 0;
-    const stopTriggered = price + 1e-9 < avg * constants.STOP_LOSS_MULTIPLIER;
-    return {
-      id: p.id,
-      ticker: String(p.ticker).toUpperCase(),
-      qty,
-      avg,
-      price,
-      mv,
-      pnl,
-      pnlPct,
-      stopTriggered,
-    };
-  });
+	// Get count of all historical tickers (not currently on page)
+	const historicalCount = await db
+		.select({ count: sql<number>`count(*)` })
+		.from(symbols)
+		.where(eq(symbols.isOnPage, false));
 
-  // Build equity series (one point per day). If no stored history, synthesize today from current state.
-  const values = portfolioId
-    ? await db
-        .select({ date: pricesDaily.date })
-        .from(pricesDaily)
-        .where(inArray(pricesDaily.symbolId, symbolIds))
-        .orderBy(pricesDaily.date)
-    : [];
+	return (
+		<main className="min-h-screen bg-neutral-950 text-white">
+			<div className="container mx-auto max-w-6xl px-4 py-10">
+				<div className="mb-8">
+					<h1 className="font-extrabold text-4xl tracking-tight">
+						Wishing Wealth Tracker
+					</h1>
+					<p className="text-emerald-400 text-sm">Logged in as {user.email}</p>
+				</div>
 
-  // Use portfolioValues if present in the future; for now aggregate by day from latest closes available per day.
-  // Fallback to single-point current equity for today.
-  const byDate = new Map<string, number>();
-  if (symbolIds.length > 0) {
-    // Pull daily closes for these symbols and aggregate to an equity estimate: cash + sum(qty * close)
-    const priceRows = await db
-      .select({
-        symbolId: pricesDaily.symbolId,
-        date: pricesDaily.date,
-        close: pricesDaily.close,
-      })
-      .from(pricesDaily)
-      .where(inArray(pricesDaily.symbolId, symbolIds))
-      .orderBy(pricesDaily.date);
-    const qtyBySymbol = new Map<string, number>(
-      open.map((p) => [String(p.symbolId), Number(p.qty)])
-    );
-    for (const r of priceRows) {
-      if (r.close == null) continue;
-      const day = String(r.date);
-      const qty = qtyBySymbol.get(String(r.symbolId)) ?? 0;
-      const add = qty * Number(r.close);
-      byDate.set(day, (byDate.get(day) ?? 0) + add);
-    }
-  }
+				{/* KPIs */}
+				<div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+					<KpiCard
+						label="Tickers On Page"
+						value={String(tickersOnPage.length)}
+					/>
+					<KpiCard
+						label="Historical Tickers"
+						value={String(historicalCount[0]?.count ?? 0)}
+					/>
+					<KpiCard
+						label="Last Update"
+						value={tickerData[0]?.priceDate ?? "Never"}
+					/>
+				</div>
 
-  let equitySeries: { date: string; equity: number }[] = Array.from(
-    byDate.entries()
-  )
-    .map(([date, mv]) => ({ date, equity: cashCurrent + mv }))
-    .sort((a, b) => a.date.localeCompare(b.date));
-  if (equitySeries.length === 0) {
-    const mv = positionsView.reduce((s, r) => s + r.mv, 0);
-    equitySeries = [
-      { date: new Date().toISOString().slice(0, 10), equity: cashCurrent + mv },
-    ];
-  }
+				{/* Actions */}
+				<div className="mb-8 flex items-center justify-end">
+					<RefreshPricesButton />
+				</div>
 
-  return (
-    <main className="min-h-screen bg-neutral-950 text-white">
-      <div className="container mx-auto max-w-6xl px-4 py-10">
-        <div className="mb-8">
-          <h1 className="font-extrabold text-4xl tracking-tight">
-            Wishing Wealth Tracker
-          </h1>
-          <p className="text-sm text-emerald-400">Logged in as {user.email}</p>
-        </div>
+				{/* Current Tickers Table */}
+				<section className="rounded-xl border border-white/10 bg-white/5 p-4 shadow-sm">
+					<h2 className="mb-3 font-semibold text-emerald-400 text-lg">
+						Current Tickers on wishingwealthblog.com
+					</h2>
+					<div className="overflow-x-auto">
+						<table className="min-w-full text-sm">
+							<thead className="text-white/70">
+								<tr>
+									<th className="px-2 py-2 text-left">Ticker</th>
+									<th className="px-2 py-2 text-left">Exchange</th>
+									<th className="px-2 py-2 text-right">Price</th>
+									<th className="px-2 py-2 text-right">First Seen</th>
+									<th className="px-2 py-2 text-right">Last Updated</th>
+								</tr>
+							</thead>
+							<tbody>
+								{tickerData.map((t) => (
+									<tr key={String(t.id)} className="border-white/10 border-t">
+										<td className="px-2 py-2 font-semibold">{t.ticker}</td>
+										<td className="px-2 py-2 text-white/70">{t.exchange}</td>
+										<td className="px-2 py-2 text-right">
+											{t.price != null ? formatCurrency(t.price) : "—"}
+										</td>
+										<td className="px-2 py-2 text-right text-white/60">
+											{t.firstSeen ?? "—"}
+										</td>
+										<td className="px-2 py-2 text-right text-white/60">
+											{t.priceDate ?? "—"}
+										</td>
+									</tr>
+								))}
+								{tickerData.length === 0 && (
+									<tr>
+										<td
+											colSpan={5}
+											className="px-2 py-6 text-center text-white/60"
+										>
+											No tickers currently on the page. Run the cron job to
+											populate.
+										</td>
+									</tr>
+								)}
+							</tbody>
+						</table>
+					</div>
+				</section>
 
-        {/* KPIs */}
-        <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {(() => {
-            const equityNow =
-              positionsView.reduce((s, r) => s + r.mv, 0) + cashCurrent;
-            const gainers = positionsView.filter((r) => r.pnl >= 0).length;
-            const losers = positionsView.filter((r) => r.pnl < 0).length;
-            const stops = positionsView.filter((r) => r.stopTriggered).length;
-            return (
-              <>
-                <KpiCard label="Equity" value={formatCurrency(equityNow)} />
-                <KpiCard label="Cash" value={formatCurrency(cashCurrent)} />
-                <KpiCard label="Gainers" value={`${gainers}`} />
-                <KpiCard
-                  label="Stops flagged"
-                  value={`${stops}`}
-                  tone={stops > 0 ? "warn" : "ok"}
-                />
-              </>
-            );
-          })()}
-        </div>
-
-        {/* Equity line chart */}
-        <div className="mb-8">
-          <div className="mb-3 flex items-center justify-between">
-            <div />
-            <RefreshPricesButton />
-          </div>
-          <EquityLineChart data={equitySeries} />
-        </div>
-
-        <div className="grid grid-cols-1 gap-8">
-          <section className="rounded-xl border border-white/10 bg-white/5 p-4 shadow-sm">
-            <h2 className="mb-3 text-lg font-semibold text-emerald-400">
-              Open positions
-            </h2>
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="text-white/70">
-                  <tr>
-                    <th className="px-2 py-2 text-left">Ticker</th>
-                    <th className="px-2 py-2 text-right">Qty</th>
-                    <th className="px-2 py-2 text-right">Avg Cost</th>
-                    <th className="px-2 py-2 text-right">Last</th>
-                    <th className="px-2 py-2 text-right">Market Value</th>
-                    <th className="px-2 py-2 text-right">Unrealized PnL</th>
-                    <th className="px-2 py-2 text-right">Stop</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {positionsView.map((r) => (
-                    <tr key={r.id} className="border-t border-white/10">
-                      <td className="px-2 py-2 font-semibold">{r.ticker}</td>
-                      <td className="px-2 py-2 text-right">
-                        {formatNumber(r.qty, 4)}
-                      </td>
-                      <td className="px-2 py-2 text-right">
-                        {formatCurrency(r.avg)}
-                      </td>
-                      <td className="px-2 py-2 text-right">
-                        {formatCurrency(r.price)}
-                      </td>
-                      <td className="px-2 py-2 text-right">
-                        {formatCurrency(r.mv)}
-                      </td>
-                      <td className="px-2 py-2 text-right">
-                        <span
-                          className={
-                            r.pnl >= 0 ? "text-emerald-400" : "text-red-400"
-                          }
-                        >
-                          {formatCurrency(r.pnl)} ({r.pnlPct.toFixed(2)}%)
-                        </span>
-                      </td>
-                      <td className="px-2 py-2 text-right">
-                        {r.stopTriggered ? (
-                          <span className="rounded bg-red-500/10 px-2 py-0.5 text-xs text-red-300">
-                            below{" "}
-                            {Math.round(constants.STOP_LOSS_MULTIPLIER * 100)}%
-                          </span>
-                        ) : (
-                          <span className="text-white/40">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                  {positionsView.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={7}
-                        className="px-2 py-6 text-center text-white/60"
-                      >
-                        No open positions
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </div>
-
-        {/* Blocked tickers (cooldown) */}
-        <BlockedTickers userEmail={user.email} />
-      </div>
-    </main>
-  );
+				{/* Historical Tickers Section */}
+				<HistoricalTickers />
+			</div>
+		</main>
+	);
 }
 
-function KpiCard({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: "ok" | "warn";
-}) {
-  const color = tone === "warn" ? "text-red-300" : "text-emerald-300";
-  return (
-    <div className="rounded-xl border border-white/10 bg-white/5 p-4 shadow-sm">
-      <div className="text-xs uppercase tracking-wide text-white/60">
-        {label}
-      </div>
-      <div className={`mt-1 text-2xl font-semibold ${color}`}>{value}</div>
-    </div>
-  );
+function KpiCard({ label, value }: { label: string; value: string }) {
+	return (
+		<div className="rounded-xl border border-white/10 bg-white/5 p-4 shadow-sm">
+			<div className="text-white/60 text-xs uppercase tracking-wide">
+				{label}
+			</div>
+			<div className="mt-1 font-semibold text-2xl text-emerald-300">
+				{value}
+			</div>
+		</div>
+	);
 }
 
-async function BlockedTickers({ userEmail }: { userEmail: string }) {
-  // Determine user's portfolio
-  const userRow = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.email, userEmail))
-    .limit(1);
-  const userId = userRow[0]?.id;
-  if (!userId) return null;
-  const pf = await db
-    .select({ id: portfolios.id })
-    .from(portfolios)
-    .where(eq(portfolios.userId, userId))
-    .limit(1);
-  const portfolioId = pf[0]?.id;
-  if (!portfolioId) return null;
+async function HistoricalTickers() {
+	// Get tickers that are no longer on the page
+	const historical = await db
+		.select({
+			id: symbols.id,
+			ticker: symbols.ticker,
+			exchange: symbols.exchange,
+			firstSeen: symbols.firstSeen,
+			lastSeen: symbols.lastSeen,
+		})
+		.from(symbols)
+		.where(eq(symbols.isOnPage, false))
+		.orderBy(desc(symbols.lastSeen))
+		.limit(20);
 
-  // Recently closed losers within cooldown
-  const now = new Date();
-  const cutoff = new Date(now.getTime());
-  cutoff.setUTCDate(cutoff.getUTCDate() - constants.REENTRY_COOLDOWN_DAYS);
-  const recentClosed = await db
-    .select({
-      symbolId: positions.symbolId,
-      closedAt: positions.closedAt,
-      realizedPnl: positions.realizedPnl,
-      ticker: symbols.ticker,
-    })
-    .from(positions)
-    .innerJoin(symbols, eq(positions.symbolId, symbols.id))
-    .where(
-      and(
-        eq(positions.portfolioId, portfolioId),
-        // closed after cutoff
-        gte(positions.closedAt, cutoff),
-        lt(positions.realizedPnl, sql`0`)
-      )
-    )
-    .orderBy(desc(positions.closedAt));
+	if (historical.length === 0) {
+		return null;
+	}
 
-  if (recentClosed.length === 0) return null;
-
-  // Unique by symbol
-  const seen = new Set<string>();
-  const items = recentClosed.filter((r) => {
-    const k = String(r.symbolId);
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
-
-  return (
-    <section className="mt-8 rounded-xl border border-white/10 bg-white/5 p-4 shadow-sm">
-      <h2 className="mb-3 text-lg font-semibold text-emerald-400">
-        Blocked tickers (cooldown)
-      </h2>
-      <div className="text-sm text-white/70">
-        <div className="mb-2 text-white/60">
-          Preventing re-entry for {constants.REENTRY_COOLDOWN_DAYS} days after a
-          loss
-        </div>
-        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {items.map((r) => (
-            <li
-              key={String(r.symbolId)}
-              className="flex items-center justify-between rounded-md border border-white/10 bg-white/5 px-3 py-2"
-            >
-              <span className="font-semibold">
-                {String(r.ticker).toUpperCase()}
-              </span>
-              <span className="text-xs text-white/60">
-                closed {String(r.closedAt)}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </div>
-    </section>
-  );
+	return (
+		<section className="mt-8 rounded-xl border border-white/10 bg-white/5 p-4 shadow-sm">
+			<h2 className="mb-3 font-semibold text-emerald-400 text-lg">
+				Historical Tickers (No Longer on Page)
+			</h2>
+			<div className="overflow-x-auto">
+				<table className="min-w-full text-sm">
+					<thead className="text-white/70">
+						<tr>
+							<th className="px-2 py-2 text-left">Ticker</th>
+							<th className="px-2 py-2 text-left">Exchange</th>
+							<th className="px-2 py-2 text-right">First Seen</th>
+							<th className="px-2 py-2 text-right">Last Seen</th>
+						</tr>
+					</thead>
+					<tbody>
+						{historical.map((t) => (
+							<tr key={String(t.id)} className="border-white/10 border-t">
+								<td className="px-2 py-2 font-semibold text-white/70">
+									{t.ticker}
+								</td>
+								<td className="px-2 py-2 text-white/50">{t.exchange}</td>
+								<td className="px-2 py-2 text-right text-white/50">
+									{t.firstSeen ?? "—"}
+								</td>
+								<td className="px-2 py-2 text-right text-white/50">
+									{t.lastSeen ?? "—"}
+								</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+			</div>
+		</section>
+	);
 }
 
 function formatCurrency(n: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 2,
-  }).format(n);
+	return new Intl.NumberFormat("en-US", {
+		style: "currency",
+		currency: "USD",
+		maximumFractionDigits: 2,
+	}).format(n);
 }
-
-function formatNumber(n: number, digits = 2) {
-  return new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }).format(n);
-}
-
-// Equity chart removed
