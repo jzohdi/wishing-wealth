@@ -240,6 +240,35 @@ test("B13 an unknown path returns Next's 404 page @readonly", async ({
 	await expect(page.getByRole("heading", { name: "404" })).toBeVisible();
 });
 
+const BASELINE_HEADERS = {
+	"x-content-type-options": "nosniff",
+	"referrer-policy": "strict-origin-when-cross-origin",
+	"permissions-policy": "camera=(), microphone=(), geolocation=()",
+};
+
+test("pages send the security headers and no X-Powered-By @readonly", async ({
+	page,
+	allowFailure,
+}) => {
+	allowFailure(NOT_FOUND, 404);
+	for (const path of ["/", "/login", NOT_FOUND]) {
+		const response = await page.goto(path);
+		const headers = (await response?.allHeaders()) ?? {};
+		expect(headers).toMatchObject(BASELINE_HEADERS);
+		expect(headers).not.toHaveProperty("x-powered-by");
+	}
+});
+
+test("API responses send the security headers and no X-Powered-By", async ({
+	request,
+}) => {
+	const response = await request.get("/api/cron");
+	expect(response.status()).toBe(401);
+	const headers = response.headers();
+	expect(headers).toMatchObject(BASELINE_HEADERS);
+	expect(headers).not.toHaveProperty("x-powered-by");
+});
+
 test("B9 POST /api/prices/refresh without a session returns 401", async ({
 	request,
 }) => {
