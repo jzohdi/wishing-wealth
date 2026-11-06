@@ -3,7 +3,7 @@
 // dashboard tests. Tests tagged @readonly only load pages, so they alone run against a deployed site.
 // B14 runs after every test: no page errors, no CSP violations, and no 4xx/5xx responses or console errors from
 // this site's origin apart from the failures a test allows on purpose (other origins, e.g. a preview's Vercel
-// toolbar, don't count).
+// toolbar, don't count, and neither does the toolbar being blocked by the CSP).
 import { test as base, expect, type Page } from "@playwright/test";
 import { render } from "@react-email/render";
 import { createElement } from "react";
@@ -92,8 +92,11 @@ const test = base.extend<{
 				page.on("console", (message) => {
 					if (message.type() !== "error") return;
 					const text = message.text();
-					if (text.startsWith("[csp-violation]"))
+					if (text.startsWith("[csp-violation]")) {
+						// Expected on previews only: the CSP deliberately doesn't allow Vercel's toolbar.
+						if (/ blocked https:\/\/vercel\.live(\/|$)/.test(text)) return;
 						return void problems.push(text);
+					}
 					const url = message.location().url;
 					if (url && !isOwnOrigin(url)) return;
 					// Chrome's own line for an allowed failure, and the app's tRPC loggerLink line for it.
