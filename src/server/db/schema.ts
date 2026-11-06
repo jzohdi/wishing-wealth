@@ -36,6 +36,13 @@ export const users = createTable(
 			.timestamp({ withTimezone: true })
 			.default(sql`CURRENT_TIMESTAMP`)
 			.notNull(),
+		// The pending login code (src/server/api/routers/auth.ts): an HMAC of the code, never the code itself.
+		otpCodeHash: d.text(),
+		otpCodeExpiresAt: d.timestamp({ withTimezone: true }),
+		otpCodeAttempts: d.integer().default(0).notNull(),
+		// The send limit's current window, and the codes sent in it.
+		otpSendWindowStart: d.timestamp({ withTimezone: true }),
+		otpSendCount: d.integer().default(0).notNull(),
 	}),
 	(t) => [uniqueIndex("users_email_unique").on(t.email)],
 );

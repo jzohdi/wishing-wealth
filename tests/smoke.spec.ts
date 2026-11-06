@@ -4,13 +4,19 @@
 // B14 runs after every test: no page errors, no CSP violations, and no 4xx/5xx responses or console errors from
 // this site's origin apart from the failures a test allows on purpose (other origins, e.g. a preview's Vercel
 // toolbar, don't count, and neither does the toolbar being blocked by the CSP).
-import { test as base, expect, type Page } from "@playwright/test";
+import {
+	type APIRequestContext,
+	test as base,
+	expect,
+	type Page,
+} from "@playwright/test";
 import { render } from "@react-email/render";
 import { createElement } from "react";
 
 import { StatusEmail } from "../emails/change-summary";
 import { OneTimePasscodeEmail } from "../emails/one-time-passcode";
 import {
+	allowedEmails,
 	appConnections,
 	baseURL,
 	codeFromEmail,
@@ -18,12 +24,16 @@ import {
 	emailHtml,
 	guardLog,
 	isLocalRun,
+	loginCodeState,
 	newYorkToday,
+	oldTotpCodes,
 	requireEnv,
+	resetLoginState,
 	seedFile,
+	sessionsFor,
 	signSession,
 	stubEmails,
-	validCodes,
+	updateUser,
 	withDb,
 } from "./support/local";
 
@@ -132,8 +142,13 @@ test.describe.configure({ mode: "serial" });
 const NOT_FOUND = "/smoke-no-such-page";
 const STRANGER = "stranger@example.test";
 // The first allowed address. Local runs only.
-const allowedEmail = () =>
-	requireEnv("AUTH_ALLOWED_EMAILS").split(",")[0] ?? "";
+const allowedEmail = () => allowedEmails()[0] ?? "";
+
+// `count` six-digit codes that aren't `code`.
+const wrongCodes = (code: string, count: number) =>
+	Array.from({ length: count + 1 }, (_, i) => String(i).padStart(6, "0"))
+		.filter((c) => c !== code)
+		.slice(0, count);
 // The signed-in session from B6, reused by the dashboard tests.
 let sessionCookie = "";
 
@@ -338,7 +353,6 @@ test("B4 B5 B6 sign in with the emailed code", async ({
 
 	let code = "";
 	await test.step("B4 the allowed email gets 'Code sent', the code form and one email with the code", async () => {
-		const requestedAt = Date.now();
 		await page.getByLabel("Email").fill(email);
 		await page.getByRole("button", { name: "Send code" }).click();
 		await expect(
@@ -357,15 +371,13 @@ test("B4 B5 B6 sign in with the emailed code", async ({
 		});
 		expect(emailHtml(sent)).toContain("This code expires in 2 minutes.");
 		code = codeFromEmail(sent) ?? "";
-		expect(validCodes(email, requestedAt)).toContain(code);
+		expect(code).toMatch(/^\d{6}$/);
+		expect(emailHtml(sent)).toContain(`>${code}<`);
 	});
 
 	await test.step("B5 a wrong code shows 'Invalid or expired code' and sets no cookie", async () => {
 		allowFailure("/api/trpc/auth.verifyOtp", 500);
-		const wrong =
-			["000000", "111111", "222222"].find(
-				(c) => !validCodes(email).includes(c),
-			) ?? "";
+		const [wrong = ""] = wrongCodes(code, 1);
 		await page.getByLabel("One-time passcode").fill(wrong);
 		await page.getByRole("button", { name: "Continue" }).click();
 		await expect(
@@ -373,7 +385,8 @@ test("B4 B5 B6 sign in with the emailed code", async ({
 		).toBeVisible();
 		expect(new URL(page.url()).pathname).toBe("/login");
 		expect(await page.context().cookies()).toEqual([]);
-		expect(await countUsersAndSessions()).toEqual({ users: 0, sessions: 0 });
+		// Sending the code created the user; the wrong code created no session.
+		expect(await countUsersAndSessions()).toEqual({ users: 1, sessions: 0 });
 	});
 
 	await test.step("B6 the emailed code signs in: cookie, redirect to /, one user and one session", async () => {
@@ -625,4 +638,169 @@ test("B12 both email templates render with fixed inputs", async ({ page }) => {
 	]) {
 		expect(summary).toContain(part);
 	}
+});
+
+// ---------- login codes: random, single use, limited (local only) ----------
+
+// One tRPC call over HTTP, as the login page makes it (no batching).
+async function callAuth(
+	request: APIRequestContext,
+	procedure: "sendOtp" | "verifyOtp",
+	input: { email: string; code?: string },
+) {
+	const response = await request.post(`/api/trpc/auth.${procedure}`, {
+		data: { json: input },
+	});
+	const body = (await response.json()) as {
+		error?: { json?: { message?: string } };
+	};
+	return {
+		status: response.status(),
+		message: body.error?.json?.message ?? null,
+	};
+}
+
+const SIGNED_IN = { status: 200, message: null };
+const INVALID = { status: 500, message: "Invalid or expired code" };
+
+const emailsTo = async (address: string) =>
+	(await stubEmails()).filter(
+		(e) => Array.isArray(e.to) && e.to.includes(address),
+	);
+
+// Requests a code and returns it, read from the email the stub received.
+async function sendCode(request: APIRequestContext, address: string) {
+	const before = (await emailsTo(address)).length;
+	expect(await callAuth(request, "sendOtp", { email: address })).toEqual(
+		SIGNED_IN,
+	);
+	await expect
+		.poll(async () => (await emailsTo(address)).length)
+		.toBe(before + 1);
+	return codeFromEmail((await emailsTo(address)).at(-1)) ?? "";
+}
+
+test.describe("login codes", () => {
+	// The second allowed address, so these tests leave B4–B8's user alone.
+	const address = () => allowedEmails()[1] ?? "";
+	const verify = (request: APIRequestContext, code: string) =>
+		callAuth(request, "verifyOtp", { email: address(), code });
+
+	test.beforeEach(async () => {
+		expect(address(), "AUTH_ALLOWED_EMAILS needs a second address").not.toBe(
+			"",
+		);
+		await resetLoginState(address());
+	});
+
+	test("T5 before any code is sent, no code works, not even the old TOTP codes", async ({
+		request,
+	}) => {
+		for (const code of [...oldTotpCodes(address()), "000000", "123456"]) {
+			expect(await verify(request, code)).toEqual(INVALID);
+		}
+		expect(await sessionsFor(address())).toBe(0);
+	});
+
+	test("T1 a batch of calls is refused, and neither call runs", async ({
+		request,
+	}) => {
+		const code = await sendCode(request, address());
+		const emails = (await emailsTo(address())).length;
+		const response = await request.post(
+			"/api/trpc/auth.sendOtp,auth.verifyOtp?batch=1",
+			{
+				data: {
+					0: { json: { email: address() } },
+					1: { json: { email: address(), code } },
+				},
+			},
+		);
+		expect(response.status()).toBe(400);
+		expect((await emailsTo(address())).length).toBe(emails);
+		expect(await loginCodeState(address())).toMatchObject({
+			pending: true,
+			attempts: 0,
+			sends: 1,
+		});
+		expect(await sessionsFor(address())).toBe(0);
+	});
+
+	test("T2 after 5 wrong codes the right one is refused, and a new code works", async ({
+		request,
+	}) => {
+		const code = await sendCode(request, address());
+		for (const wrong of wrongCodes(code, 5)) {
+			expect(await verify(request, wrong)).toEqual(INVALID);
+		}
+		expect(await verify(request, code)).toEqual(INVALID);
+		expect(await sessionsFor(address())).toBe(0);
+		const next = await sendCode(request, address());
+		expect(await verify(request, next)).toEqual(SIGNED_IN);
+		expect(await sessionsFor(address())).toBe(1);
+	});
+
+	test("T3 a code signs in once only", async ({ request }) => {
+		const code = await sendCode(request, address());
+		expect(await verify(request, code)).toEqual(SIGNED_IN);
+		expect(await verify(request, code)).toEqual(INVALID);
+		expect(await sessionsFor(address())).toBe(1);
+	});
+
+	test("T4 an expired code is refused", async ({ request }) => {
+		const code = await sendCode(request, address());
+		await updateUser(
+			address(),
+			`"otpCodeExpiresAt" = now() - interval '1 second'`,
+		);
+		expect(await verify(request, code)).toEqual(INVALID);
+		expect(await sessionsFor(address())).toBe(0);
+	});
+
+	test("T6 parallel wrong guesses use at most 5 attempts", async ({
+		request,
+	}) => {
+		const code = await sendCode(request, address());
+		const results = await Promise.all(
+			wrongCodes(code, 20).map((wrong) => verify(request, wrong)),
+		);
+		expect(results).toEqual(Array(20).fill(INVALID));
+		expect((await loginCodeState(address()))?.attempts).toBe(5);
+		expect(await verify(request, code)).toEqual(INVALID);
+		expect(await sessionsFor(address())).toBe(0);
+	});
+
+	test("T7 an address gets 10 codes a day, then 429 until the window passes", async ({
+		request,
+	}) => {
+		const before = (await emailsTo(address())).length;
+		for (let i = 0; i < 10; i++) await sendCode(request, address());
+		expect(await callAuth(request, "sendOtp", { email: address() })).toEqual({
+			status: 429,
+			message: "Too many codes requested. Try again later.",
+		});
+		expect((await emailsTo(address())).length).toBe(before + 10);
+		await updateUser(
+			address(),
+			`"otpSendWindowStart" = now() - interval '25 hours'`,
+		);
+		await sendCode(request, address());
+		expect((await loginCodeState(address()))?.sends).toBe(1);
+	});
+
+	test("T8 T9 a new code replaces the last one, and two codes in one 120 s step differ", async ({
+		request,
+	}) => {
+		// Both sends inside one 120 s step of the old TOTP scheme, where they used to get the same code.
+		const intoStep = Date.now() % 120_000;
+		if (intoStep > 110_000)
+			await new Promise((r) => setTimeout(r, 120_500 - intoStep));
+		const step = Math.floor(Date.now() / 120_000);
+		const first = await sendCode(request, address());
+		const second = await sendCode(request, address());
+		expect(Math.floor(Date.now() / 120_000)).toBe(step);
+		expect(second).not.toBe(first);
+		expect(await verify(request, first)).toEqual(INVALID);
+		expect(await verify(request, second)).toEqual(SIGNED_IN);
+	});
 });

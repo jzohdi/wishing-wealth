@@ -1,6 +1,6 @@
 // Helpers for the smoke test's local-only checks: the run's settings, the throwaway database, the Resend stub,
-// the network guard's log, and the app's own session-signing and one-time-code algorithms
-// (src/server/auth/session.ts, src/server/api/routers/auth.ts), so the test can sign cookies and predict codes.
+// the network guard's log, the app's session signing (src/server/auth/session.ts), so the test can sign
+// cookies, and the old stateless login codes, which must no longer work.
 // Local runs read the app's env from the process env, and it must hold DUMMY values only.
 import { createHmac } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -98,6 +98,49 @@ export const countUsersAndSessions = () =>
 		return row;
 	});
 
+// The allowed addresses, in AUTH_ALLOWED_EMAILS order.
+export const allowedEmails = () => requireEnv("AUTH_ALLOWED_EMAILS").split(",");
+
+export const sessionsFor = (email: string) =>
+	withDb(async (sql) => {
+		const [row] = await sql<{ n: number }[]>`
+			select count(*)::int as n from wishing_wealth_sessions s
+			join wishing_wealth_users u on u.id = s."userId" where u.email = ${email}`;
+		return row?.n;
+	});
+
+export const loginCodeState = (email: string) =>
+	withDb(async (sql) => {
+		const [row] = await sql<
+			{ pending: boolean; attempts: number; sends: number }[]
+		>`
+			select "otpCodeHash" is not null as pending, "otpCodeAttempts" as attempts, "otpSendCount" as sends
+			from wishing_wealth_users where email = ${email}`;
+		return row;
+	});
+
+// Runs SQL against one user's row, e.g. to move a code's expiry or the send window into the past.
+export const updateUser = (email: string, set: string) =>
+	withDb((sql) =>
+		sql.unsafe(`update wishing_wealth_users set ${set} where email = $1`, [
+			email,
+		]),
+	);
+
+// No pending code, no sends in the window and no sessions for that address.
+export async function resetLoginState(email: string) {
+	await updateUser(
+		email,
+		`"otpCodeHash" = null, "otpCodeExpiresAt" = null, "otpCodeAttempts" = 0,
+		"otpSendWindowStart" = null, "otpSendCount" = 0`,
+	);
+	await withDb(
+		(sql) => sql`
+			delete from wishing_wealth_sessions
+			where "userId" in (select id from wishing_wealth_users where email = ${email})`,
+	);
+}
+
 // Connections to the app's database from anything but this suite: 0 proves the app never queried it.
 export const appConnections = () =>
 	withDb(async (sql) => {
@@ -174,8 +217,9 @@ function totp(key: Buffer, timeMs: number): string {
 	);
 }
 
-// The codes the app accepts right now: the previous, current and next 120 s step.
-export function validCodes(email: string, now = Date.now()): string[] {
+// The codes the old stateless scheme (before stored login codes) accepted right now: an HMAC-SHA1 TOTP of a
+// per-address key, for the previous, current and next 120 s step.
+export function oldTotpCodes(email: string, now = Date.now()): string[] {
 	const key = createHmac("sha1", Buffer.from(requireEnv("OTP_SECRET"), "utf8"))
 		.update(email.toLowerCase())
 		.digest();
