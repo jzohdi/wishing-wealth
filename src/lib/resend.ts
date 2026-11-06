@@ -1,7 +1,6 @@
-import { Resend } from "resend";
-
-import { env } from "@/env";
 import type { JSX } from "react";
+import { Resend } from "resend";
+import { env } from "@/env";
 
 const client = new Resend(env.RESEND_API_KEY);
 

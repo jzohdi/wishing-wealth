@@ -39,7 +39,10 @@ export async function getExchanges(tickers: { ticker: string; url: string }[]) {
 export async function getPrice({
 	ticker,
 	exchange,
-}: { ticker: string; exchange: string }) {
+}: {
+	ticker: string;
+	exchange: string;
+}) {
 	const url = `https://www.tradingview.com/symbols/${exchange}-${ticker}/`;
 	const html = await fetchHtmlCached(url);
 	const price = extractPriceFromHtml({ html, url });
@@ -101,7 +104,10 @@ const TopSchema = z.record(z.string(), LayerSchema);
 export function extractPriceFromHtml({
 	html,
 	url,
-}: { html: string; url: string }) {
+}: {
+	html: string;
+	url: string;
+}) {
 	const $ = load(html);
 
 	// Primary strategy: parse TradingView init JSON for robust data access

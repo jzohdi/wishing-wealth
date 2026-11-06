@@ -1,7 +1,7 @@
+import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { pricesDaily, symbols } from "@/server/db/schema";
 import { getPrice } from "@/server/scrape/trading-view";
-import { eq } from "drizzle-orm";
 
 export type TickerInput = { ticker: string; exchange: string };
 

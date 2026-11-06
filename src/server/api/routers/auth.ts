@@ -1,18 +1,16 @@
+import { render } from "@react-email/render";
 import { createHmac } from "crypto";
-
+import { eq } from "drizzle-orm";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import React from "react";
 import { z } from "zod";
-
 import { env } from "@/env";
 import { sendEmail } from "@/lib/resend";
 import { createTRPCRouter, publicProcedure } from "@/server/api/trpc";
 import constants from "@/server/constants";
 import { db } from "@/server/db";
 import { sessions, users } from "@/server/db/schema";
-import { render } from "@react-email/render";
-import { eq } from "drizzle-orm";
-import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
-import React from "react";
 import { OneTimePasscodeEmail } from "../../../../emails/one-time-passcode";
 
 function base64UrlEncode(input: Buffer | string) {

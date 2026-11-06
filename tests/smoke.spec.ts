@@ -4,7 +4,7 @@
 // B14 runs after every test: no page errors, no CSP violations, and no 4xx/5xx responses or console errors from
 // this site's origin apart from the failures a test allows on purpose (other origins, e.g. a preview's Vercel
 // toolbar, don't count).
-import { type Page, test as base, expect } from "@playwright/test";
+import { test as base, expect, type Page } from "@playwright/test";
 import { render } from "@react-email/render";
 import { createElement } from "react";
 
@@ -40,7 +40,7 @@ const test = base.extend<{
 	allowFailure: (path: string, status: number) => void;
 }>({
 	allowFailure: [
-		async ({ context }, use) => {
+		async ({ context }, runTest) => {
 			const allowed: { path: string; status: number }[] = [];
 			const problems: string[] = [];
 			const isAllowed = (url: string, status: number) =>
@@ -113,7 +113,7 @@ const test = base.extend<{
 			for (const page of context.pages()) watch(page);
 			context.on("page", watch);
 
-			await use((path, status) => allowed.push({ path, status }));
+			await runTest((path, status) => allowed.push({ path, status }));
 
 			expect(
 				problems,
@@ -145,7 +145,7 @@ async function expectSignedOut(page: Page) {
 	await expect(page.getByText(/Logged in as/)).toHaveCount(0);
 }
 
-async function useSession(page: Page, value: string) {
+async function setSessionCookie(page: Page, value: string) {
 	await page.context().clearCookies();
 	await page.context().addCookies([
 		{
@@ -363,7 +363,7 @@ test("B4 B5 B6 sign in with the emailed code", async ({
 test("B7 the dashboard shows the KPIs and both tables for the seed", async ({
 	page,
 }) => {
-	await useSession(page, sessionCookie);
+	await setSessionCookie(page, sessionCookie);
 	await page.goto("/");
 	await expect(page.getByText(`Logged in as ${allowedEmail()}`)).toBeVisible();
 	await expect(
@@ -403,11 +403,13 @@ test("B10 Refresh prices updates every on-page symbol from the fixture, behind t
 	).toBe(true);
 	const before = guardLog().length;
 
-	await useSession(page, sessionCookie);
+	await setSessionCookie(page, sessionCookie);
 	// The page reloads as soon as the response arrives, so the response and the message are caught on the way.
 	await page.addInitScript(() => {
 		new MutationObserver(() => {
-			const shown = document.body?.innerText.match(/\d+ symbol\(s\) updated/);
+			const shown = document.body?.textContent?.match(
+				/\d+ symbol\(s\) updated/,
+			);
 			if (shown) sessionStorage.setItem("refresh-message", shown[0]);
 		}).observe(document, {
 			subtree: true,
@@ -483,11 +485,11 @@ test("B8 a tampered, revoked or expired session cookie shows the signed-out page
 	const tampered = `${id}.${signature.startsWith("A") ? "B" : "A"}${signature.slice(1)}`;
 
 	// Control: a correctly signed live session shows the dashboard, so the cookies below are well formed.
-	await useSession(page, good);
+	await setSessionCookie(page, good);
 	await page.goto("/");
 	await expect(page.getByText(`Logged in as ${email}`)).toBeVisible();
 	for (const value of [tampered, signSession(revoked), signSession(expired)]) {
-		await useSession(page, value);
+		await setSessionCookie(page, value);
 		await page.goto("/");
 		await expectSignedOut(page);
 	}
@@ -507,7 +509,7 @@ test("B7 with no on-page symbols, the dashboard shows the empty state and 20 his
 			where not "isOnPage" order by "lastSeen" desc limit 20`;
 		return rows.map((r) => [r.ticker, r.exchange, r.firstSeen, r.lastSeen]);
 	});
-	await useSession(page, sessionCookie);
+	await setSessionCookie(page, sessionCookie);
 	await page.goto("/");
 	const dashboard = await readDashboard(page);
 	expect(dashboard).toEqual({
@@ -524,6 +526,7 @@ test("B7 with no on-page symbols, the dashboard shows the empty state and 20 his
 test("B12 both email templates render with fixed inputs", async ({ page }) => {
 	const text = async (html: string) => {
 		await page.setContent(html);
+		// biome-ignore lint/performance/useDomNodeTextContent: the visible text, without the hidden preview line
 		return clean(await page.locator("body").innerText());
 	};
 	const otp = await text(

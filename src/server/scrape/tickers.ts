@@ -113,4 +113,4 @@ export async function scrapeWishingWealthBlog(): Promise<ScrapeResult> {
 }
 
 // For testing
-export { parseTickersFromHtml, parseGmiSignalFromHtml };
+export { parseGmiSignalFromHtml, parseTickersFromHtml };
