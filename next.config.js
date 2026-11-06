@@ -4,7 +4,7 @@
  */
 import "./src/env.js";
 
-// On every response, the API routes included.
+// On every response, the API routes included. The pages' Content-Security-Policy is set in src/proxy.ts.
 const securityHeaders = [
 	{ key: "X-Content-Type-Options", value: "nosniff" },
 	{ key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },

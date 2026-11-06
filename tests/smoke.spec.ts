@@ -246,26 +246,48 @@ const BASELINE_HEADERS = {
 	"permissions-policy": "camera=(), microphone=(), geolocation=()",
 };
 
-test("pages send the security headers and no X-Powered-By @readonly", async ({
+test("pages send the security headers and a nonce CSP, and no X-Powered-By @readonly", async ({
 	page,
 	allowFailure,
 }) => {
 	allowFailure(NOT_FOUND, 404);
+	const nonces = new Set<string>();
 	for (const path of ["/", "/login", NOT_FOUND]) {
 		const response = await page.goto(path);
 		const headers = (await response?.allHeaders()) ?? {};
 		expect(headers).toMatchObject(BASELINE_HEADERS);
 		expect(headers).not.toHaveProperty("x-powered-by");
+		const csp = headers["content-security-policy"] ?? "";
+		const nonce = /'nonce-([^']+)'/.exec(csp)?.[1] ?? "";
+		expect(csp).toBe(
+			[
+				"default-src 'self'",
+				`script-src 'self' 'nonce-${nonce}'`,
+				"style-src 'self' 'unsafe-inline'",
+				"img-src 'self' data:",
+				"font-src 'self'",
+				"connect-src 'self'",
+				"object-src 'none'",
+				"base-uri 'self'",
+				"form-action 'self'",
+				"frame-ancestors 'self' https://jakezohdi.dev https://studio-zohdi-llc.com https://www.studio-zohdi-llc.com",
+			].join("; "),
+		);
+		// Next.js put the request's nonce on the scripts it rendered.
+		expect(await response?.text()).toContain(`nonce="${nonce}"`);
+		nonces.add(nonce);
 	}
+	expect(nonces.size).toBe(3);
 });
 
-test("API responses send the security headers and no X-Powered-By", async ({
+test("API responses send the security headers, without a CSP or X-Powered-By", async ({
 	request,
 }) => {
 	const response = await request.get("/api/cron");
 	expect(response.status()).toBe(401);
 	const headers = response.headers();
 	expect(headers).toMatchObject(BASELINE_HEADERS);
+	expect(headers).not.toHaveProperty("content-security-policy");
 	expect(headers).not.toHaveProperty("x-powered-by");
 });
 
