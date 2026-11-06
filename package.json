@@ -71,5 +71,10 @@
   "allowScripts": {
     "esbuild": false,
     "fsevents": false
+  },
+  "overrides": {
+    "react-email": {
+      "glob": "14.0.3"
+    }
   }
 }
