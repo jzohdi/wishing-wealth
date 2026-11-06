@@ -87,10 +87,7 @@ export const authRouter = createTRPCRouter({
 	sendOtp: publicProcedure
 		.input(
 			z.object({
-				email: z
-					.string()
-					.email()
-					.transform((e) => e.toLowerCase()),
+				email: z.email().transform((e) => e.toLowerCase()),
 			}),
 		)
 		.mutation(async ({ input, ctx }) => {
@@ -121,10 +118,7 @@ export const authRouter = createTRPCRouter({
 	verifyOtp: publicProcedure
 		.input(
 			z.object({
-				email: z
-					.string()
-					.email()
-					.transform((e) => e.toLowerCase()),
+				email: z.email().transform((e) => e.toLowerCase()),
 				code: z.string().min(1),
 			}),
 		)

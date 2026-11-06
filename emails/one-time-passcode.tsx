@@ -1,3 +1,4 @@
+import type * as React from "react";
 import {
 	Body,
 	Container,
@@ -8,8 +9,7 @@ import {
 	Preview,
 	Section,
 	Text,
-} from "@react-email/components";
-import type * as React from "react";
+} from "react-email";
 
 type OneTimePasscodeEmailProps = {
 	code: string;
@@ -117,7 +117,8 @@ const styles: Record<string, React.CSSProperties> = {
 		lineHeight: "22px",
 	},
 	hr: {
-		borderColor: "#e5e7eb",
+		// react-email 6's <Hr> sets borderTop after borderColor, so the colour goes in borderTop.
+		borderTop: "1px solid #e5e7eb",
 		marginTop: 18,
 		marginBottom: 14,
 	},

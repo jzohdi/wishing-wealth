@@ -1,3 +1,4 @@
+import type * as React from "react";
 import {
 	Body,
 	Container,
@@ -8,8 +9,7 @@ import {
 	Preview,
 	Section,
 	Text,
-} from "@react-email/components";
-import type * as React from "react";
+} from "react-email";
 
 type GmiSignal = "GREEN" | "RED" | null;
 
@@ -195,7 +195,8 @@ const styles = {
 		margin: "8px 0 0 0",
 	} as React.CSSProperties,
 	hr: {
-		borderColor: slate900,
+		// react-email 6's <Hr> sets borderTop after borderColor, so the colour goes in borderTop.
+		borderTop: `1px solid ${slate900}`,
 		margin: "20px 0",
 	} as React.CSSProperties,
 	section: {
