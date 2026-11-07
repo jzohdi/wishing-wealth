@@ -39,7 +39,10 @@ export async function getExchanges(tickers: { ticker: string; url: string }[]) {
 export async function getPrice({
 	ticker,
 	exchange,
-}: { ticker: string; exchange: string }) {
+}: {
+	ticker: string;
+	exchange: string;
+}) {
 	const url = `https://www.tradingview.com/symbols/${exchange}-${ticker}/`;
 	const html = await fetchHtmlCached(url);
 	const price = extractPriceFromHtml({ html, url });
@@ -53,13 +56,13 @@ const FieldSchema = z
 		name: z.string(),
 		value: Primitive.optional(),
 	})
-	.passthrough();
+	.loose();
 
 const PriceVarSchema = z
 	.object({
 		fields: z.array(FieldSchema).optional(),
 	})
-	.passthrough();
+	.loose();
 
 const SymbolFaqSchema = z
 	.object({
@@ -67,41 +70,44 @@ const SymbolFaqSchema = z
 			.object({
 				price: PriceVarSchema.optional(),
 			})
-			.passthrough(),
+			.loose(),
 	})
-	.passthrough();
+	.loose();
 
 const TradeSchema = z
 	.object({
 		price: z.number().optional(),
 	})
-	.passthrough();
+	.loose();
 
 const SymbolSchema = z
 	.object({
 		trade: TradeSchema.optional(),
 	})
-	.passthrough();
+	.loose();
 
 const LayerDataSchema = z
 	.object({
 		symbol: SymbolSchema.optional(),
 		symbol_faq_data: SymbolFaqSchema.optional(),
 	})
-	.passthrough();
+	.loose();
 
 const LayerSchema = z
 	.object({
 		data: LayerDataSchema.optional(),
 	})
-	.passthrough();
+	.loose();
 
-const TopSchema = z.record(LayerSchema);
+const TopSchema = z.record(z.string(), LayerSchema);
 
 export function extractPriceFromHtml({
 	html,
 	url,
-}: { html: string; url: string }) {
+}: {
+	html: string;
+	url: string;
+}) {
 	const $ = load(html);
 
 	// Primary strategy: parse TradingView init JSON for robust data access
@@ -196,23 +202,23 @@ function findPriceInUnknown(root: unknown): number | undefined {
 			name: z.string(),
 			value: Primitive.optional(),
 		})
-		.passthrough();
+		.loose();
 
 	const TradeLike = z
 		.object({
-			trade: z.object({ price: z.number() }).passthrough(),
+			trade: z.object({ price: z.number() }).loose(),
 		})
-		.passthrough();
+		.loose();
 
 	const PriceVarsLike = z
 		.object({
 			variables: z
 				.object({
-					price: z.object({ fields: z.array(FieldSchema) }).passthrough(),
+					price: z.object({ fields: z.array(FieldSchema) }).loose(),
 				})
-				.passthrough(),
+				.loose(),
 		})
-		.passthrough();
+		.loose();
 
 	const stack: unknown[] = [root];
 	let steps = 0;

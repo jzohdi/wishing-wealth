@@ -20,6 +20,8 @@ const handler = (req: NextRequest) =>
 		endpoint: "/api/trpc",
 		req,
 		router: appRouter,
+		// One call per request, so a request can't carry many login-code guesses.
+		allowBatching: false,
 		createContext: () => createContext(req),
 		onError:
 			env.NODE_ENV === "development"

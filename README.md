@@ -64,12 +64,12 @@ Scheduling and time windows (MVP)
 
 Authentication (OTP)
 
-- No NextAuth; OTP codes are generated cryptographically (TOTP-like HMAC) and
-  emailed via Resend.
-- Codes are short-lived and valid for a small drift window.
+- No NextAuth; a random 6-digit code is emailed via Resend and stored only as an
+  HMAC on the user's row.
+- Codes are short-lived (4 minutes), single use and allow 5 attempts; an address
+  gets at most 10 codes a day.
 - Only whitelisted email(s) may request OTPs.
 - On successful verification, set a signed, httpOnly session cookie.
-- Rate-limit OTP requests and verifications per email/IP to prevent abuse.
 
 -------------------------------------------------------------------------------
 
@@ -223,7 +223,7 @@ Environment configuration
 - ALERT_EMAIL: destination for alerts/digests
 - AUTH_ALLOWED_EMAILS: comma-separated list of allowed logins
 - SESSION_SECRET: secret for signing JWT/session cookies
-- OTP_SECRET: secret for generating OTP codes
+- OTP_SECRET: secret for hashing the stored login codes
 - CRON_SECRET: shared secret for the heartbeat endpoint
 
 -------------------------------------------------------------------------------
@@ -232,9 +232,11 @@ constants.ts
 
 ```ts
 export default {
-    OTP_STEP_SECONDS: 120,
-    OTP_DIGITS: 6,
-    STARTING_CASH: 10000,
+    OTP_TTL_SECONDS: 240,
+    OTP_MAX_ATTEMPTS: 5,
+    OTP_MAX_SENDS: 10,
+    OTP_SEND_WINDOW_HOURS: 24,
+    OTP_EMAIL_VALID_MINUTES: 2,
     SOURCE_URL: "https://www.wishingwealthblog.com/",
 } as const;
 ```
@@ -270,8 +272,8 @@ Operational guidelines
   - Ensure (symbol, date) uniqueness for daily prices.
 - Security
   - httpOnly, Secure cookies; sameSite Lax or Strict.
-  - Rate-limit OTP endpoints; throttle scraping endpoints.
-  - Do not persist OTP codes; verify against time-based HMAC.
+  - Limit login-code sends and attempts; throttle scraping endpoints.
+  - Store login codes only as an HMAC, and use each code once.
 
 -------------------------------------------------------------------------------
 
@@ -295,7 +297,7 @@ Acceptance criteria
 
 Setup (overview)
 
-- Requirements: Node 18+, a Neon database (Vercel Postgres), Resend account.
+- Requirements: Node 24 (see `.nvmrc`), a Neon database (Vercel Postgres), Resend account.
 - Steps:
   1) Configure environment variables (.env.local) as listed above.
   2) Create database schema with Drizzle (generate migrations, then apply).
@@ -305,6 +307,9 @@ Setup (overview)
 - Local dev:
   - Run Next.js dev server and use a local Postgres or a Neon branch.
   - Use a test email address for OTP and alerts.
+- Checks: `npm run check` (Biome), `npm run typecheck`, `npm run scrape:test`,
+  and `npm run test:smoke` (Playwright, against a local build with a throwaway
+  Postgres and stand-ins; see `playwright.config.ts`).
 
 -------------------------------------------------------------------------------
 
@@ -626,47 +631,55 @@ Implementation guidance
 ### Authentication flow (MVP - Email OTP)
 
 Overview
-- Passwordless login using a cryptographically generated 6-digit OTP.
+- Passwordless login with a random 6-digit code (`src/server/auth/login-code.ts`).
 - Allowed emails are managed via env.AUTH_ALLOWED_EMAILS.
-- OTP parameters come from `src/server/constants.ts` (OTP_DIGITS, OTP_STEP_SECONDS).
-- Codes are not persisted; verification is deterministic using OTP_SECRET and step time.
+- Limits come from `src/server/constants.ts`: a code lasts `OTP_TTL_SECONDS`
+  (240) and allows `OTP_MAX_ATTEMPTS` (5); an address gets `OTP_MAX_SENDS` (10)
+  codes per `OTP_SEND_WINDOW_HOURS` (24). The email says the code is valid for
+  `OTP_EMAIL_VALID_MINUTES` (2).
+- The code is stored only as HMAC-SHA256(OTP_SECRET, `email:code`) on the
+  user's row, and a new code replaces the previous one.
+- tRPC batching is off, so each request carries one call.
 
 User journey
 1) Enter email on login page.
 2) Frontend calls tRPC `authRouter.sendOtp` with `{ email }`.
 3) Backend checks `email` against `env.AUTH_ALLOWED_EMAILS`.
-   - If not allowed → reject with 403 and message.
-4) If allowed → generate a 6-digit OTP using HMAC(TOTP-style) with `env.OTP_SECRET`, step = `constants.OTP_STEP_SECONDS`.
-   - Code validity: 2 minutes (accept small drift window, e.g., ±1 step for clock skew).
+   - If not allowed → reject with a message.
+4) If allowed → create the user if needed, generate a random code and store its
+   hash, expiry and attempt count, within the send limit.
+   - Over the limit → 429 "Too many codes requested. Try again later.", and no email.
    - Compose email using react-email template.
    - Send via Resend using `env.RESEND_API_KEY`.
 5) tRPC `sendOtp` returns success; UI then displays an input for the OTP and a Continue button.
    - If the call failed, UI surfaces the error.
 6) User submits code → frontend calls tRPC `authRouter.verifyOtp` with `{ email, code }`.
-7) Backend re-validates allowed email, derives expected code(s) for the current step window, and compares.
-   - If valid: upsert `users` by email, create a `sessions` row (DB), set an httpOnly, Secure cookie.
-   - If invalid: return 401 with a safe error message.
+7) Backend re-validates allowed email, spends one attempt on the pending code,
+   then compares hashes in constant time.
+   - If valid: the code is used up, a `sessions` row (DB) is created, and an
+     httpOnly, Secure cookie is set.
+   - If invalid, expired, used up or out of attempts: "Invalid or expired code".
 8) User is considered logged in; protected routes check for a valid session cookie and active DB session.
-
-Backend implementation notes
-- sendOtp(input: { email })
-  - Reject if not in allowed list.
-  - Derive code with `OTP_SECRET`, `OTP_STEP_SECONDS`, `OTP_DIGITS`.
-  - Render email with react-email; send with Resend.
-  - Return `{ ok: true }`.
-- verifyOtp(input: { email, code })
-  - Reject if not in allowed list.
-  - Derive expected code for the current time window (optionally ±1 step).
-  - If mismatch → 401.
-  - If match → upsert user, create session record, set cookie, return `{ ok: true }`.
 
 Database interactions for auth
 ```sql
--- Upsert user by email (case-insensitive citext)
-INSERT INTO users (email)
-VALUES ($1)
-ON CONFLICT (email) DO NOTHING
+-- sendOtp: create the user by email (case-insensitive citext)
+INSERT INTO users (email) VALUES ($1) ON CONFLICT (email) DO NOTHING;
+
+-- then store the new code, unless the address has had 10 in the window (no row back)
+-- <window over> = otp_send_window_start IS NULL OR otp_send_window_start <= now() - interval '24 hours'
+UPDATE users
+SET otp_code_hash = $2, otp_code_expires_at = now() + interval '240 seconds', otp_code_attempts = 0,
+    otp_send_window_start = CASE WHEN <window over> THEN now() ELSE otp_send_window_start END,
+    otp_send_count = CASE WHEN <window over> THEN 1 ELSE otp_send_count + 1 END
+WHERE email = $1 AND (<window over> OR otp_send_count < 10)
 RETURNING id;
+
+-- verifyOtp: spend an attempt first, then compare, then use the code up
+UPDATE users SET otp_code_attempts = otp_code_attempts + 1
+WHERE email = $1 AND otp_code_hash IS NOT NULL AND otp_code_expires_at > now()
+  AND otp_code_attempts < 5
+RETURNING id, otp_code_hash;
 
 -- Create session for user
 INSERT INTO sessions (user_id, issued_at, expires_at, user_agent, ip)
@@ -680,10 +693,10 @@ Cookie guidance
 - On logout: set `revoked_at` for the session row; clear cookie.
 
 Security considerations (MVP)
-- No DB rate limiting in MVP; rely on allowed-list and strong secrets.
+- Login codes are limited per address (attempts and sends, above); rely on the
+  allowed-list and strong secrets otherwise.
 - Enforce minimal PII exposure in responses; don’t echo codes.
 - Normalize emails to lowercase; `citext` already provides case-insensitivity.
-- Ensure time source is reliable for OTP step calculations.
 
 -------------------------------------------------------------------------------
 

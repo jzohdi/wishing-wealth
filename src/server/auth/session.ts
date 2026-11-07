@@ -1,12 +1,11 @@
 import "server-only";
 
 import { createHmac, timingSafeEqual } from "crypto";
-
+import { eq } from "drizzle-orm";
+import { cookies } from "next/headers";
 import { env } from "@/env";
 import { db } from "@/server/db";
 import { sessions, users } from "@/server/db/schema";
-import { eq } from "drizzle-orm";
-import { cookies } from "next/headers";
 
 function base64UrlEncode(input: Buffer | string) {
 	const buf = Buffer.isBuffer(input) ? input : Buffer.from(input);

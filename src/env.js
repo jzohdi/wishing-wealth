@@ -7,16 +7,16 @@ export const env = createEnv({
 	 * isn't built with invalid env vars.
 	 */
 	server: {
-		DATABASE_URL_UNPOOLED: z.string().url(),
+		DATABASE_URL_UNPOOLED: z.url(),
 		PGHOST: z.string(),
 		SESSION_SECRET: z.string(),
 		OTP_SECRET: z.string(),
 		CRON_SECRET: z.string(),
 		RESEND_API_KEY: z.string(),
-		RESEND_FROM_EMAIL: z.string().email(),
-		ALERT_EMAIL: z.string().email(),
+		RESEND_FROM_EMAIL: z.email(),
+		ALERT_EMAIL: z.email(),
 		AUTH_ALLOWED_EMAILS: z.string().transform((val) => val.split(",")),
-		DATABASE_URL: z.string().url(),
+		DATABASE_URL: z.url(),
 		NODE_ENV: z
 			.enum(["development", "test", "production"])
 			.default("development"),

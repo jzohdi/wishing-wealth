@@ -2,6 +2,7 @@ import "@/styles/globals.css";
 
 import type { Metadata } from "next";
 import { Geist } from "next/font/google";
+import { connection } from "next/server";
 
 import { TRPCReactProvider } from "@/trpc/react";
 
@@ -16,9 +17,11 @@ const geist = Geist({
 	variable: "--font-geist-sans",
 });
 
-export default function RootLayout({
+export default async function RootLayout({
 	children,
 }: Readonly<{ children: React.ReactNode }>) {
+	// Render every page per request, so each gets the nonce from src/proxy.ts's Content-Security-Policy.
+	await connection();
 	return (
 		<html lang="en" className={`${geist.variable}`}>
 			<body>

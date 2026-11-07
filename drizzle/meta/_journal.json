@@ -8,6 +8,13 @@
       "when": 1764352454706,
       "tag": "0000_lowly_malcolm_colcord",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1794006845278,
+      "tag": "0001_parched_golden_guardian",
+      "breakpoints": true
     }
   ]
 }

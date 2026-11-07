@@ -1,26 +1,44 @@
 {
-	"$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+	"$schema": "https://biomejs.dev/schemas/2.6.4/schema.json",
 	"vcs": {
 		"enabled": true,
 		"clientKind": "git",
 		"useIgnoreFile": true
 	},
-	"files": { "ignoreUnknown": false, "ignore": [] },
+	"files": {
+		"ignoreUnknown": false,
+		// Biome 2 also checks HTML and Markdown, which Biome 1 skipped. The HTML here is third-party pages saved as
+		// scraper fixtures, and the README was never Biome-formatted, so both stay out as before. drizzle/meta is
+		// written by drizzle-kit.
+		"includes": [
+			"**",
+			"!src/server/scrape/examples",
+			"!**/*.md",
+			"!drizzle/meta"
+		]
+	},
+	// Tailwind 4's @theme, @custom-variant and @apply in src/styles/globals.css.
+	"css": { "parser": { "tailwindDirectives": true } },
 	"formatter": { "enabled": true },
-	"organizeImports": { "enabled": true },
+	"assist": { "actions": { "source": { "organizeImports": "on" } } },
 	"linter": {
 		"enabled": true,
 		"rules": {
+			"correctness": {
+				// New in Biome 2's recommended set. They flag code that predates the upgrade, so they stay warnings
+				// until that code is cleaned up.
+				"noUnusedImports": "warn",
+				"noUnusedVariables": "warn",
+				"noUnusedFunctionParameters": "warn"
+			},
 			"nursery": {
-				"useSortedClasses": {
+				"useTailwindSortedClasses": {
 					"level": "warn",
-					"fix": "safe",
-					"options": {
-						"functions": ["clsx", "cva", "cn"]
-					}
+					"fix": "safe"
 				}
 			},
-			"recommended": true
+			"preset": "recommended"
 		}
-	}
+	},
+	"tailwind": { "mergeFunctions": ["clsx", "cn"], "variantFunctions": ["cva"] }
 }

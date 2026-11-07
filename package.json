@@ -12,56 +12,72 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "dev": "next dev --turbo",
+    "dev": "next dev",
     "dev:email": "email dev",
     "preview": "next build && next start",
     "start": "next start",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "SKIP_ENV_VALIDATION=1 next typegen && tsc --noEmit",
     "cron:test": "npx tsx ./scripts/test-cron.ts",
-    "scrape:test": "npx tsx src/server/scrape/tests/extract-price.test.ts"
+    "scrape:test": "npx tsx src/server/scrape/tests/extract-price.test.ts",
+    "test:smoke": "playwright test"
   },
   "dependencies": {
-    "@radix-ui/react-slot": "^1.2.3",
-    "@react-email/components": "^0.5.3",
-    "@t3-oss/env-nextjs": "^0.12.0",
-    "@tanstack/react-query": "^5.69.0",
-    "@trpc/client": "^11.0.0",
-    "@trpc/react-query": "^11.0.0",
-    "@trpc/server": "^11.0.0",
-    "cheerio": "^1.1.2",
+    "@radix-ui/react-slot": "^1.5.0",
+    "@react-email/render": "^2.2.0",
+    "@t3-oss/env-nextjs": "^0.13.11",
+    "@tanstack/react-query": "^5.105.3",
+    "@trpc/client": "^11.24.0",
+    "@trpc/react-query": "^11.24.0",
+    "@trpc/server": "^11.24.0",
+    "cheerio": "^1.2.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "drizzle-orm": "^0.41.0",
-    "input-otp": "^1.4.2",
-    "lucide-react": "^0.544.0",
-    "next": "^15.5.7",
-    "postgres": "^3.4.4",
-    "react": "^19.2.1",
-    "react-dom": "^19.2.1",
-    "recharts": "^2.15.4",
-    "resend": "^6.1.0",
+    "drizzle-orm": "^0.45.4",
+    "input-otp": "^1.5.0",
+    "lucide-react": "^1.67.0",
+    "next": "^16.4.5",
+    "postgres": "^3.4.9",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-email": "6.11.6",
+    "recharts": "^3.10.1",
+    "resend": "^6.37.0",
     "server-only": "^0.0.1",
-    "superjson": "^2.2.1",
-    "tailwind-merge": "^3.3.1",
-    "zod": "^3.24.2"
+    "superjson": "^2.2.6",
+    "tailwind-merge": "^3.7.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@biomejs/biome": "1.9.4",
-    "@tailwindcss/postcss": "^4.0.15",
-    "@types/node": "^20.14.10",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
-    "dotenv": "^17.2.2",
-    "drizzle-kit": "^0.30.5",
-    "postcss": "^8.5.3",
-    "react-email": "4.2.11",
-    "tailwindcss": "^4.0.15",
-    "tsx": "^4.20.5",
-    "tw-animate-css": "^1.3.8",
-    "typescript": "^5.8.2"
+    "@biomejs/biome": "2.6.4",
+    "@playwright/test": "^1.64.1",
+    "@tailwindcss/postcss": "^4.3.4",
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "dotenv": "^18.0.9",
+    "drizzle-kit": "^0.31.11",
+    "postcss": "^8.5.32",
+    "tailwindcss": "^4.3.4",
+    "tsx": "^4.23.15",
+    "tw-animate-css": "^1.4.0",
+    "typescript": "^6.0.3"
   },
   "ct3aMetadata": {
     "initVersion": "7.39.3"
   },
-  "packageManager": "npm@11.6.0"
+  "engines": {
+    "node": "24.x"
+  },
+  "allowScripts": {
+    "esbuild": false,
+    "fsevents": false
+  },
+  "overrides": {
+    "react-email": {
+      "glob": "14.0.3"
+    },
+    "@esbuild-kit/core-utils": {
+      "esbuild": "0.25.12"
+    }
+  }
 }
